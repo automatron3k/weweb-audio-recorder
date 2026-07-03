@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "name": "audio-recorder",
+    "description": "Graba audio desde el micrófono del dispositivo, permite previsualizarlo y, al confirmar, emite un File listo para subir.",
+    "keywords": ["audio", "grabacion", "microfono", "mediarecorder", "voz"],
+    "features": [
+      "Grabación de audio con MediaRecorder usando el formato nativo del navegador (webm/opus o mp4)",
+      "Cronómetro en vivo y auto-stop al llegar a la duración máxima",
+      "Previsualización con reproductor antes de confirmar",
+      "Volver a grabar (descarta) o guardar (emite el File)",
+      "Estado de error inline si se deniega el micrófono o no hay soporte"
+    ],
+    "inherit": []
+  },
+  "properties": [
+    {
+      "name": "maxDurationSeconds",
+      "description": "Duración máxima de la grabación en segundos; al alcanzarla la grabación se detiene sola y pasa a previsualización.",
+      "type": "number",
+      "defaultValue": 240
+    }
+  ],
+  "states": [],
+  "events": [
+    {
+      "name": "saved",
+      "description": "Se dispara cuando el usuario confirma la grabación con 'Guardar grabación'. El consumidor debe subir el File (por ejemplo a Storage) y persistir su URL.",
+      "payload": {
+        "value": "File — audio grabado, nombre grabacion_<timestamp>.<ext> (ext webm/mp4/mp3 según el navegador), type = mimeType real"
+      }
+    }
+  ],
+  "localContext": [],
+  "actions": [],
+  "slots": [],
+  "variables": [],
+  "specifications": [
+    "El evento 'saved' entrega un File, no un Blob crudo, para tratarlo igual que el value de un input de archivo.",
+    "No accede al micrófono cuando isEditing es true (dentro del editor de WeWeb el botón Grabar queda deshabilitado).",
+    "Usa wwLib.getFrontWindow() para todo acceso a MediaRecorder, navigator, Blob, File, URL y timers.",
+    "No convierte el audio client-side: sube el formato nativo (audio/webm;codecs=opus en Chrome/Firefox/Android, audio/mp4 en Safari/iOS). El consumidor debe reconocer webm/mp4 como audio.",
+    "El botón 'Guardar grabación' queda deshabilitado si la grabación resultó vacía (0 bytes).",
+    "Limpia stream, blob URLs y timers en beforeUnmount."
+  ],
+  "examples": [
+    {
+      "description": "Grabador con límite de 4 minutos (default)",
+      "example": "{\"maxDurationSeconds\": 240}"
+    }
+  ],
+  "dependencies": []
+}

@@ -1,0 +1,12 @@
+{
+  "name": "audio-recorder",
+  "version": "1.0.0",
+  "description": "Graba audio desde el micrófono y emite un File al confirmar.",
+  "scripts": {
+    "build": "weweb build",
+    "serve": "weweb serve"
+  },
+  "devDependencies": {
+    "@weweb/cli": "latest"
+  }
+}
