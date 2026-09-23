@@ -26,15 +26,33 @@
 
     <!-- preview -->
     <div v-else-if="state === 'preview'" class="ar-col">
+      <!-- Reproductor custom: el <audio> nativo no puede mostrar la duración de los blobs
+           WebM de MediaRecorder (duration=Infinity, seekable=0). Usamos la duración que
+           medimos al grabar (recordedDuration) para el total. -->
+      <div v-if="previewUrl" class="ar-player">
+        <button
+          type="button"
+          class="ar-play-btn"
+          @click="togglePlay"
+          :aria-label="isPlaying ? 'Pausar' : 'Reproducir'"
+        >
+          {{ isPlaying ? "⏸" : "▶" }}
+        </button>
+        <div class="ar-progress">
+          <div class="ar-progress-fill" :style="{ width: progressPct + '%' }"></div>
+        </div>
+        <span class="ar-time">{{ currentLabel }} / {{ totalLabel }}</span>
+      </div>
       <audio
         v-if="previewUrl"
         ref="previewAudio"
         :src="previewUrl"
         preload="metadata"
-        controls
-        class="ar-audio"
-        @loadedmetadata="onPreviewMeta"
-        @durationchange="onPreviewDurationChange"
+        class="ar-audio-hidden"
+        @timeupdate="onTimeUpdate"
+        @play="isPlaying = true"
+        @pause="isPlaying = false"
+        @ended="onEnded"
       ></audio>
       <div class="ar-row">
         <button type="button" class="ar-btn" @click="discardRecording">
@@ -88,7 +106,9 @@ export default {
       _animFrameId: null,
       _waveformSamples: [],
       _lastSampleTime: 0,
-      _fixingDuration: false,
+      recordedDuration: 0,
+      isPlaying: false,
+      currentTime: 0,
     };
   },
   computed: {
@@ -115,6 +135,16 @@ export default {
     },
     hasAudio() {
       return !!this.recordedFile && this.recordedFile.size > 0;
+    },
+    currentLabel() {
+      return this.fmtTime(this.currentTime);
+    },
+    totalLabel() {
+      return this.fmtTime(this.recordedDuration);
+    },
+    progressPct() {
+      if (!(this.recordedDuration > 0)) return 0;
+      return Math.min(100, (this.currentTime / this.recordedDuration) * 100);
     },
   },
   methods: {
@@ -189,6 +219,10 @@ export default {
     },
     stopRecording() {
       const win = this.getWin();
+      // Duración real medida al grabar (el blob no la expone de forma fiable).
+      this.recordedDuration = this._startTs
+        ? Math.max(0, (Date.now() - this._startTs) / 1000)
+        : this.elapsed;
       if (this._timerId) {
         win.clearInterval(this._timerId);
         this._timerId = null;
@@ -213,25 +247,32 @@ export default {
       this.teardownStream();
       this.state = "preview";
     },
-    // Los blobs WebM de MediaRecorder no traen el header de duración → el <audio> nativo reporta
-    // duration=Infinity y muestra "0:00 /" con el total en blanco hasta que se reproduce/hace seek.
-    // Forzamos el cálculo saltando al final; al resolverse la duración volvemos a 0. Solo afecta al
-    // reproductor de preview — el File que se guarda/sube queda intacto (no se re-encoda).
-    onPreviewMeta() {
+    // Reproductor custom del preview. Los blobs WebM de MediaRecorder tienen duration=Infinity y
+    // seekable=0 → el <audio> nativo no puede mostrar la duración total ni permitir seek. Usamos la
+    // duración medida al grabar (recordedDuration) para el total y timeupdate para el actual.
+    fmtTime(sec) {
+      const s = Number.isFinite(sec) && sec > 0 ? sec : 0;
+      const m = Math.floor(s / 60);
+      const ss = Math.floor(s % 60);
+      return `${m}:${String(ss).padStart(2, "0")}`;
+    },
+    togglePlay() {
       const a = this.$refs.previewAudio;
       if (!a) return;
-      if (!Number.isFinite(a.duration)) {
-        this._fixingDuration = true;
-        try { a.currentTime = 1e101; } catch (e) { this._fixingDuration = false; }
+      if (a.paused) {
+        a.play().catch(() => {});
+      } else {
+        a.pause();
       }
     },
-    onPreviewDurationChange() {
+    onTimeUpdate() {
       const a = this.$refs.previewAudio;
-      if (!a || !this._fixingDuration) return;
-      if (Number.isFinite(a.duration)) {
-        this._fixingDuration = false;
-        try { a.currentTime = 0; } catch (e) { /* noop */ }
-      }
+      if (a) this.currentTime = a.currentTime;
+    },
+    onEnded() {
+      this.isPlaying = false;
+      // Al terminar, mostramos el total completo (no podemos confiar en audio.currentTime).
+      this.currentTime = this.recordedDuration;
     },
     discardRecording() {
       this.cleanupPreview();
@@ -250,6 +291,9 @@ export default {
       this.state = "idle";
       this.elapsed = 0;
       this.errorMessage = "";
+      this.isPlaying = false;
+      this.currentTime = 0;
+      this.recordedDuration = 0;
     },
     teardownStream() {
       if (this._stream) {
@@ -259,6 +303,10 @@ export default {
     },
     cleanupPreview() {
       const win = this.getWin();
+      const a = this.$refs.previewAudio;
+      if (a) { try { a.pause(); } catch (e) { /* noop */ } }
+      this.isPlaying = false;
+      this.currentTime = 0;
       if (this.previewUrl) {
         win.URL.revokeObjectURL(this.previewUrl);
         this.previewUrl = null;
@@ -396,9 +444,55 @@ export default {
   color: #6b7280;
   font-size: 13px;
 }
-.ar-audio {
+.ar-audio-hidden {
+  display: none;
+}
+.ar-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   max-width: 320px;
+  padding: 8px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+.ar-play-btn {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: #166534;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ar-progress {
+  flex: 1 1 auto;
+  height: 6px;
+  background: #d1fae5;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ar-progress-fill {
+  height: 100%;
+  background: #16a34a;
+  border-radius: 3px;
+  transition: width 0.1s linear;
+}
+.ar-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  color: #166534;
 }
 .ar-canvas {
   width: 100%;
