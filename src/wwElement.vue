@@ -26,7 +26,16 @@
 
     <!-- preview -->
     <div v-else-if="state === 'preview'" class="ar-col">
-      <audio v-if="previewUrl" :src="previewUrl" controls class="ar-audio"></audio>
+      <audio
+        v-if="previewUrl"
+        ref="previewAudio"
+        :src="previewUrl"
+        preload="metadata"
+        controls
+        class="ar-audio"
+        @loadedmetadata="onPreviewMeta"
+        @durationchange="onPreviewDurationChange"
+      ></audio>
       <div class="ar-row">
         <button type="button" class="ar-btn" @click="discardRecording">
           Volver a grabar
@@ -79,6 +88,7 @@ export default {
       _animFrameId: null,
       _waveformSamples: [],
       _lastSampleTime: 0,
+      _fixingDuration: false,
     };
   },
   computed: {
@@ -202,6 +212,26 @@ export default {
       this.previewUrl = blob.size > 0 ? win.URL.createObjectURL(blob) : null;
       this.teardownStream();
       this.state = "preview";
+    },
+    // Los blobs WebM de MediaRecorder no traen el header de duración → el <audio> nativo reporta
+    // duration=Infinity y muestra "0:00 /" con el total en blanco hasta que se reproduce/hace seek.
+    // Forzamos el cálculo saltando al final; al resolverse la duración volvemos a 0. Solo afecta al
+    // reproductor de preview — el File que se guarda/sube queda intacto (no se re-encoda).
+    onPreviewMeta() {
+      const a = this.$refs.previewAudio;
+      if (!a) return;
+      if (!Number.isFinite(a.duration)) {
+        this._fixingDuration = true;
+        try { a.currentTime = 1e101; } catch (e) { this._fixingDuration = false; }
+      }
+    },
+    onPreviewDurationChange() {
+      const a = this.$refs.previewAudio;
+      if (!a || !this._fixingDuration) return;
+      if (Number.isFinite(a.duration)) {
+        this._fixingDuration = false;
+        try { a.currentTime = 0; } catch (e) { /* noop */ }
+      }
     },
     discardRecording() {
       this.cleanupPreview();

@@ -29,6 +29,16 @@ alimenta un workflow que sube el File a `diagnosticos/audio` y llama
 `guardar_respuestas_diagnostico`. Ver
 `docs/superpowers/plans/2026-07-03-grabador-audio-diagnosticos.md`.
 
+**Captura vía `tipo='encabezado'` (2026-08-20).** El audio de lectura oral ya no
+cuelga de las preguntas 82/98/109 sino de una fila `tipo='encabezado'` por set
+(ver `supabase/CLAUDE.md` → regla del encabezado). El LC `pregunta` renderiza ese
+tipo como instrucción + grabador + uploader, **sin alternativas y sin número**.
+⚠️ Gotcha: la prop `formato_respuesta` **no llega** al encabezado en el LC, así que
+las condiciones de visibilidad de audio (grabador `67a33555`, `adjunto` `f391c700`,
+div del reproductor `cbb97906`) usan `|| !wwFormulas.toBool(nro_pregunta)` — el
+encabezado es el **único** ítem con `numero` nulo. La fórmula del título corta con
+`if (n_pregunta == null) return enunciado;` para no pintar el prefijo `"null. :"`.
+
 ## Verificación local
 
 `test/harness.html` monta el componente con Vue por CDN y un shim de `wwLib`
