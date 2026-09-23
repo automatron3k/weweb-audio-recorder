@@ -24,12 +24,12 @@
       </div>
     </div>
 
-    <!-- preview -->
-    <div v-else-if="state === 'preview'" class="ar-col">
-      <!-- Reproductor custom: el <audio> nativo no puede mostrar la duración de los blobs
-           WebM de MediaRecorder (duration=Infinity, seekable=0). Usamos la duración que
-           medimos al grabar (recordedDuration) para el total. -->
-      <div v-if="previewUrl" class="ar-player">
+    <!-- preview (recién grabado, sin guardar) o saved (guardado / cargado al revisar) -->
+    <div v-else-if="state === 'preview' || state === 'saved'" class="ar-col">
+      <!-- Reproductor custom. El <audio> nativo no puede mostrar la duración de los WebM de
+           MediaRecorder (duration=Infinity, seekable=0). El total sale de la duración medida al
+           grabar (recién grabado) o de decodeAudioData (archivo guardado al revisar). -->
+      <div v-if="playerSrc" class="ar-player">
         <button
           type="button"
           class="ar-play-btn"
@@ -44,9 +44,9 @@
         <span class="ar-time">{{ currentLabel }} / {{ totalLabel }}</span>
       </div>
       <audio
-        v-if="previewUrl"
+        v-if="playerSrc"
         ref="previewAudio"
-        :src="previewUrl"
+        :src="playerSrc"
         preload="metadata"
         class="ar-audio-hidden"
         @timeupdate="onTimeUpdate"
@@ -54,7 +54,9 @@
         @pause="onPause"
         @ended="onEnded"
       ></audio>
-      <div class="ar-row">
+
+      <!-- acciones según estado -->
+      <div v-if="state === 'preview'" class="ar-row">
         <button type="button" class="ar-btn" @click="discardRecording">
           Volver a grabar
         </button>
@@ -65,6 +67,11 @@
           @click="saveRecording"
         >
           Guardar grabación
+        </button>
+      </div>
+      <div v-else class="ar-row">
+        <button type="button" class="ar-btn" :disabled="isEditing" @click="reRecord">
+          🎙️ Grabar de nuevo
         </button>
       </div>
     </div>
@@ -94,6 +101,9 @@ export default {
       errorMessage: "",
       previewUrl: null,
       recordedFile: null,
+      durationSec: 0,
+      isPlaying: false,
+      currentTime: 0,
       _mediaRecorder: null,
       _stream: null,
       _chunks: [],
@@ -106,10 +116,8 @@ export default {
       _animFrameId: null,
       _waveformSamples: [],
       _lastSampleTime: 0,
-      recordedDuration: 0,
-      isPlaying: false,
-      currentTime: 0,
       _progressRafId: null,
+      _loadToken: 0,
     };
   },
   computed: {
@@ -124,6 +132,10 @@ export default {
       const v = Number(this.content?.maxDurationSeconds);
       return Number.isFinite(v) && v > 0 ? v : 240;
     },
+    savedAudioUrl() {
+      const u = this.content?.savedAudioUrl;
+      return typeof u === "string" && u ? u : "";
+    },
     maxMinutesLabel() {
       const m = Math.floor(this.maxDurationSeconds / 60);
       const s = this.maxDurationSeconds % 60;
@@ -137,16 +149,31 @@ export default {
     hasAudio() {
       return !!this.recordedFile && this.recordedFile.size > 0;
     },
+    // Fuente del reproductor: el blob recién grabado tiene prioridad; si no, el archivo guardado.
+    playerSrc() {
+      return this.previewUrl || this.savedAudioUrl || "";
+    },
     currentLabel() {
       return this.fmtTime(this.currentTime);
     },
     totalLabel() {
-      return this.fmtTime(this.recordedDuration);
+      return this.fmtTime(this.durationSec);
     },
     progressPct() {
-      if (!(this.recordedDuration > 0)) return 0;
-      return Math.min(100, (this.currentTime / this.recordedDuration) * 100);
+      if (!(this.durationSec > 0)) return 0;
+      return Math.min(100, (this.currentTime / this.durationSec) * 100);
     },
+  },
+  watch: {
+    savedAudioUrl(url) {
+      // Al revisar: si llega/actualiza la URL guardada y no hay una grabación fresca en curso.
+      if (url && !this.previewUrl && (this.state === "idle" || this.state === "saved")) {
+        this.loadSavedAudio(url);
+      }
+    },
+  },
+  mounted() {
+    if (this.savedAudioUrl) this.loadSavedAudio(this.savedAudioUrl);
   },
   methods: {
     getWin() {
@@ -209,6 +236,7 @@ export default {
       this._mediaRecorder.onstop = () => this.finalize();
       this._mediaRecorder.start();
       this.elapsed = 0;
+      this.currentTime = 0;
       this._startTs = Date.now();
       this.state = "recording";
       this._timerId = win.setInterval(() => this.tick(), 250);
@@ -221,7 +249,7 @@ export default {
     stopRecording() {
       const win = this.getWin();
       // Duración real medida al grabar (el blob no la expone de forma fiable).
-      this.recordedDuration = this._startTs
+      this.durationSec = this._startTs
         ? Math.max(0, (Date.now() - this._startTs) / 1000)
         : this.elapsed;
       if (this._timerId) {
@@ -245,12 +273,40 @@ export default {
       this.recordedFile = new win.File([blob], name, { type });
       if (this.previewUrl) win.URL.revokeObjectURL(this.previewUrl);
       this.previewUrl = blob.size > 0 ? win.URL.createObjectURL(blob) : null;
+      this.currentTime = 0;
       this.teardownStream();
       this.state = "preview";
     },
-    // Reproductor custom del preview. Los blobs WebM de MediaRecorder tienen duration=Infinity y
-    // seekable=0 → el <audio> nativo no puede mostrar la duración total ni permitir seek. Usamos la
-    // duración medida al grabar (recordedDuration) para el total y timeupdate para el actual.
+    // Carga el audio ya guardado (al revisar). La duración real se obtiene con decodeAudioData,
+    // que decodifica el archivo completo y no depende del header/seekable rotos del WebM.
+    async loadSavedAudio(url) {
+      const win = this.getWin();
+      this.stopProgressLoop();
+      this.isPlaying = false;
+      this.currentTime = 0;
+      this.durationSec = 0;
+      this.recordedFile = null;
+      if (this.previewUrl) {
+        win.URL.revokeObjectURL(this.previewUrl);
+        this.previewUrl = null;
+      }
+      this.state = "saved";
+      const token = ++this._loadToken;
+      try {
+        const resp = await win.fetch(url);
+        const buf = await resp.arrayBuffer();
+        const Ctx = win.AudioContext || win.webkitAudioContext;
+        if (Ctx) {
+          const ctx = new Ctx();
+          const decoded = await ctx.decodeAudioData(buf.slice(0));
+          if (token === this._loadToken) this.durationSec = decoded.duration;
+          try { ctx.close(); } catch (e) { /* noop */ }
+        }
+      } catch (e) {
+        // Fallback (ej. Safari no decodifica WebM): el reproductor funciona, total en 0:00.
+        if (token === this._loadToken) this.durationSec = 0;
+      }
+    },
     fmtTime(sec) {
       const s = Number.isFinite(sec) && sec > 0 ? sec : 0;
       const m = Math.floor(s / 60);
@@ -267,7 +323,7 @@ export default {
       }
     },
     onTimeUpdate() {
-      // Fallback: timeupdate solo dispara ~4×/s. El avance fino lo maneja el loop rAF.
+      // timeupdate solo dispara ~4×/s; el avance fino lo maneja el loop rAF mientras reproduce.
       const a = this.$refs.previewAudio;
       if (a && !this.isPlaying) this.currentTime = a.currentTime;
     },
@@ -301,12 +357,23 @@ export default {
     onEnded() {
       this.isPlaying = false;
       this.stopProgressLoop();
-      // Al terminar, mostramos el total completo (no podemos confiar en audio.currentTime).
-      this.currentTime = this.recordedDuration;
+      // Al terminar mostramos el total completo (no confiamos en audio.currentTime).
+      this.currentTime = this.durationSec;
     },
+    // "Volver a grabar" desde el preview: descarta lo grabado; si hay audio guardado, lo re-muestra.
     discardRecording() {
       this.cleanupPreview();
+      if (this.savedAudioUrl) {
+        this.loadSavedAudio(this.savedAudioUrl);
+      } else {
+        this.reset();
+      }
+    },
+    // "Grabar de nuevo" desde saved: descarta lo actual y arranca una grabación nueva.
+    reRecord() {
+      this.cleanupPreview();
       this.reset();
+      this.startRecording();
     },
     saveRecording() {
       if (!this.hasAudio) return;
@@ -314,8 +381,12 @@ export default {
         name: "saved",
         event: { value: this.recordedFile },
       });
-      this.cleanupPreview();
-      this.reset();
+      // No reseteamos: el reproductor custom se queda mostrando lo recién guardado (sin swap).
+      this.stopProgressLoop();
+      this.isPlaying = false;
+      this.currentTime = 0;
+      this.recordedFile = null;
+      this.state = "saved";
     },
     reset() {
       this.state = "idle";
@@ -323,7 +394,7 @@ export default {
       this.errorMessage = "";
       this.isPlaying = false;
       this.currentTime = 0;
-      this.recordedDuration = 0;
+      this.durationSec = 0;
     },
     teardownStream() {
       if (this._stream) {
@@ -331,6 +402,7 @@ export default {
         this._stream = null;
       }
     },
+    // Libera el blob fresco (no toca el audio guardado en storage).
     cleanupPreview() {
       const win = this.getWin();
       const a = this.$refs.previewAudio;
@@ -423,6 +495,7 @@ export default {
     const win = this.getWin();
     if (this._timerId) win.clearInterval(this._timerId);
     this.stopVisualizer(win);
+    this.stopProgressLoop();
     this.teardownStream();
     this.cleanupPreview();
   },

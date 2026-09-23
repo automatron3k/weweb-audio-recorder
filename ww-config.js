@@ -34,5 +34,23 @@ export default {
       },
       /* wwEditor:end */
     },
+    savedAudioUrl: {
+      label: { en: "Saved audio URL", es: "URL audio guardado" },
+      type: "Text",
+      section: "settings",
+      bindable: true,
+      defaultValue: "",
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip:
+          "URL del audio ya guardado de esta pregunta. Si viene, el componente muestra el reproductor al revisar (reemplaza al <audio> nativo).",
+      },
+      propertyHelp: {
+        tooltip:
+          "Bindear a la URL del audio guardado. Vacío = arranca en modo grabación.",
+      },
+      /* wwEditor:end */
+    },
   },
 };

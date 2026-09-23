@@ -3,11 +3,25 @@
 Graba audio desde el micrófono y, al confirmar, emite el evento `saved` con
 `{ value: File }` (nombre `grabacion_<ts>.<ext>`, formato nativo del navegador —
 `audio/webm;codecs=opus` en Chrome/Firefox/Android, `audio/mp4` en Safari/iOS).
+Desde **v1.1.0** también es **reproductor**: muestra un player custom del audio (recién
+grabado o el ya guardado) — reemplaza al `<audio>` nativo, que no puede mostrar la duración
+de estos WebM (`duration=Infinity`, `seekable=0`).
 
-- Prop: `maxDurationSeconds` (Number, default 240, bindable). Auto-stop al límite.
-- Estados: `idle → recording → preview → (saved | idle)`, más `error`.
+- Prop `maxDurationSeconds` (Number, default 240, bindable). Auto-stop al límite.
+- Prop `savedAudioUrl` (Text, bindable, v1.1.0): URL del audio ya guardado de esa pregunta.
+  Si viene, al montar muestra el player con ese archivo (duración real vía `decodeAudioData`,
+  que no depende del header/seekable rotos). Vacío = arranca en modo grabación.
+- Estados: `idle → recording → preview → saved`, más `error`. En `preview` (recién grabado)
+  botones "Volver a grabar" / "Guardar grabación"; en `saved` botón "Grabar de nuevo".
+  Tras guardar **no vuelve a idle**: el player custom se queda mostrando la grabación (sin swap).
+- Duración total: `recordedDuration` (cronómetro) para lo recién grabado; `decodeAudioData` para
+  el archivo cargado por `savedAudioUrl`. Barra de progreso con `requestAnimationFrame` (60fps).
 - No accede al micrófono en el editor de WeWeb (`isEditing`).
-- Usa `wwLib.getFrontWindow()` para MediaRecorder/navigator/Blob/File/URL/timers.
+- Usa `wwLib.getFrontWindow()` para MediaRecorder/navigator/Blob/File/URL/AudioContext/timers.
+
+⚠️ **En WeWeb hay que bindear `savedAudioUrl` a la URL del audio guardado y QUITAR el `<audio>`
+nativo** (antes `cbb97906`) — el player del componente lo reemplaza en los dos casos (recién
+grabado y revisión).
 
 ## Publicación
 

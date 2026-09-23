@@ -1,6 +1,6 @@
 {
   "name": "audio-recorder",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Graba audio desde el micrófono y emite un File al confirmar.",
   "scripts": {
     "build": "weweb build",
