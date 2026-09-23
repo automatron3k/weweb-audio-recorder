@@ -50,8 +50,8 @@
         preload="metadata"
         class="ar-audio-hidden"
         @timeupdate="onTimeUpdate"
-        @play="isPlaying = true"
-        @pause="isPlaying = false"
+        @play="onPlay"
+        @pause="onPause"
         @ended="onEnded"
       ></audio>
       <div class="ar-row">
@@ -109,6 +109,7 @@ export default {
       recordedDuration: 0,
       isPlaying: false,
       currentTime: 0,
+      _progressRafId: null,
     };
   },
   computed: {
@@ -266,11 +267,40 @@ export default {
       }
     },
     onTimeUpdate() {
+      // Fallback: timeupdate solo dispara ~4×/s. El avance fino lo maneja el loop rAF.
       const a = this.$refs.previewAudio;
-      if (a) this.currentTime = a.currentTime;
+      if (a && !this.isPlaying) this.currentTime = a.currentTime;
+    },
+    onPlay() {
+      this.isPlaying = true;
+      this.startProgressLoop();
+    },
+    onPause() {
+      this.isPlaying = false;
+      this.stopProgressLoop();
+    },
+    startProgressLoop() {
+      const win = this.getWin();
+      this.stopProgressLoop();
+      const tick = () => {
+        const a = this.$refs.previewAudio;
+        if (!a) return;
+        this.currentTime = a.currentTime;
+        if (!a.paused && !a.ended) {
+          this._progressRafId = win.requestAnimationFrame(tick);
+        }
+      };
+      this._progressRafId = win.requestAnimationFrame(tick);
+    },
+    stopProgressLoop() {
+      if (this._progressRafId) {
+        this.getWin().cancelAnimationFrame(this._progressRafId);
+        this._progressRafId = null;
+      }
     },
     onEnded() {
       this.isPlaying = false;
+      this.stopProgressLoop();
       // Al terminar, mostramos el total completo (no podemos confiar en audio.currentTime).
       this.currentTime = this.recordedDuration;
     },
@@ -305,6 +335,7 @@ export default {
       const win = this.getWin();
       const a = this.$refs.previewAudio;
       if (a) { try { a.pause(); } catch (e) { /* noop */ } }
+      this.stopProgressLoop();
       this.isPlaying = false;
       this.currentTime = 0;
       if (this.previewUrl) {
@@ -485,7 +516,6 @@ export default {
   height: 100%;
   background: #16a34a;
   border-radius: 3px;
-  transition: width 0.1s linear;
 }
 .ar-time {
   flex: 0 0 auto;

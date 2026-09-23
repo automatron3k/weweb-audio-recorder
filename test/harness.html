@@ -20,7 +20,7 @@
       .ar-player { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 320px; padding: 8px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; box-sizing: border-box; }
       .ar-play-btn { flex: 0 0 auto; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; background: #166534; color: #fff; font-size: 13px; line-height: 1; cursor: pointer; }
       .ar-progress { flex: 1 1 auto; height: 6px; background: #d1fae5; border-radius: 3px; overflow: hidden; }
-      .ar-progress-fill { height: 100%; background: #16a34a; border-radius: 3px; transition: width 0.1s linear; }
+      .ar-progress-fill { height: 100%; background: #16a34a; border-radius: 3px; }
       .ar-time { flex: 0 0 auto; font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: #166534; }
       .ar-canvas { width: 100%; max-width: 280px; height: 48px; border-radius: 6px; background: #f0fdf4; display: block; }
       .ar-error { color: #b91c1c; font-size: 14px; margin: 0; }
@@ -61,7 +61,7 @@
             </div>
             <div v-else-if="state === 'preview'" class="ar-col">
               <div v-if="previewUrl" class="ar-player"><button type="button" class="ar-play-btn" @click="togglePlay">{{ isPlaying ? '⏸' : '▶' }}</button><div class="ar-progress"><div class="ar-progress-fill" :style="{ width: progressPct + '%' }"></div></div><span class="ar-time">{{ currentLabel }} / {{ totalLabel }}</span></div>
-              <audio v-if="previewUrl" ref="previewAudio" :src="previewUrl" preload="metadata" class="ar-audio-hidden" @timeupdate="onTimeUpdate" @play="isPlaying = true" @pause="isPlaying = false" @ended="onEnded"></audio>
+              <audio v-if="previewUrl" ref="previewAudio" :src="previewUrl" preload="metadata" class="ar-audio-hidden" @timeupdate="onTimeUpdate" @play="onPlay" @pause="onPause" @ended="onEnded"></audio>
               <div class="ar-row">
                 <button type="button" class="ar-btn" @click="discardRecording">Volver a grabar</button>
                 <button type="button" class="ar-btn ar-btn-primary" :disabled="!hasAudio" @click="saveRecording">Guardar grabación</button>
@@ -95,6 +95,7 @@
             recordedDuration: 0,
             isPlaying: false,
             currentTime: 0,
+            _progressRafId: null,
           };
         },
         computed: {
@@ -212,10 +213,27 @@
           },
           onTimeUpdate() {
             const a = this.$refs.previewAudio;
-            if (a) this.currentTime = a.currentTime;
+            if (a && !this.isPlaying) this.currentTime = a.currentTime;
+          },
+          onPlay() { this.isPlaying = true; this.startProgressLoop(); },
+          onPause() { this.isPlaying = false; this.stopProgressLoop(); },
+          startProgressLoop() {
+            const win = this.getWin();
+            this.stopProgressLoop();
+            const tick = () => {
+              const a = this.$refs.previewAudio;
+              if (!a) return;
+              this.currentTime = a.currentTime;
+              if (!a.paused && !a.ended) { this._progressRafId = win.requestAnimationFrame(tick); }
+            };
+            this._progressRafId = win.requestAnimationFrame(tick);
+          },
+          stopProgressLoop() {
+            if (this._progressRafId) { this.getWin().cancelAnimationFrame(this._progressRafId); this._progressRafId = null; }
           },
           onEnded() {
             this.isPlaying = false;
+            this.stopProgressLoop();
             this.currentTime = this.recordedDuration;
           },
           discardRecording() { this.cleanupPreview(); this.reset(); },
@@ -233,6 +251,7 @@
             const win = this.getWin();
             const a = this.$refs.previewAudio;
             if (a) { try { a.pause(); } catch (e) {} }
+            this.stopProgressLoop();
             this.isPlaying = false;
             this.currentTime = 0;
             if (this.previewUrl) { win.URL.revokeObjectURL(this.previewUrl); this.previewUrl = null; }
